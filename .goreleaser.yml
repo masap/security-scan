@@ -1,0 +1,27 @@
+---
+project_name: kube-bench
+env:
+  - GO111MODULE=on
+  - CGO_ENABLED=0
+builds:
+  - main: cmd/kb-summarizer/main.go
+    binary: kb-summarizer
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm
+      - arm64
+      - ppc64le
+      - s390x
+    goarm:
+      - 6
+      - 7
+    ldflags:
+      - "-X main.VERSION={{.Version}}"
+# Archive customization
+archives:
+  - id: default
+    format: tar.gz
+    name_template: '{{ .Binary }}_{{.Version}}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{.Arm }}{{ end }}'

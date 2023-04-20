@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	kb "github.com/aquasecurity/kube-bench/check"
 	"github.com/sirupsen/logrus"
@@ -30,6 +31,7 @@ const (
 	NodeResultsFilename         = "node.json"
 	ControlPlaneResultsFilename = "controlplane.json"
 	PoliciesResultsFilename     = "policies.json"
+	GenericResultsFilename      = "generic.json"
 	CurrentBenchmarkKey         = "current"
 	DefaultErrorLogFileName     = "error.log"
 )
@@ -56,12 +58,12 @@ type Summarizer struct {
 type State string
 
 const (
-	Pass          State = "P"
-	Fail          State = "F"
-	Skip          State = "S"
-	Mixed         State = "M"
-	NotApplicable State = "N"
-	Warn          State = "W"
+	Pass          State = "pass"
+	Fail          State = "fail"
+	Skip          State = "skip"
+	Mixed         State = "mixed"
+	NotApplicable State = "na"
+	Warn          State = "warn"
 
 	SKIP kb.State = "SKIP"
 	NA   kb.State = "NA"
@@ -72,10 +74,10 @@ const (
 type NodeType string
 
 const (
-	NodeTypeNone   NodeType = ""
-	NodeTypeEtcd   NodeType = "e"
-	NodeTypeMaster NodeType = "m"
-	NodeTypeNode   NodeType = "n"
+	NodeTypeNone   NodeType = "none"
+	NodeTypeEtcd   NodeType = "etcd"
+	NodeTypeMaster NodeType = "master"
+	NodeTypeNode   NodeType = "node"
 )
 
 const (
@@ -87,40 +89,40 @@ const (
 
 type CheckWrapper struct {
 	ID                 string                       `yaml:"id" json:"id"`
-	Text               string                       `json:"d"`
-	Type               string                       `json:"tt"`
-	Remediation        string                       `json:"r"`
-	State              State                        `json:"s"`
-	Scored             bool                         `json:"sc"`
+	Text               string                       `json:"text"`
+	Type               string                       `json:"type"`
+	Remediation        string                       `json:"remediation"`
+	State              State                        `json:"state"`
+	Scored             bool                         `json:"scored"`
 	Result             map[kb.State]map[string]bool `json:"-"`
-	NodeType           []NodeType                   `json:"t"`
+	NodeType           []NodeType                   `json:"node_type"`
 	NodesMap           map[string]bool              `json:"-"`
-	Nodes              []string                     `json:"n,omitempty"`
-	Audit              string                       `json:"a"`
-	AuditConfig        string                       `json:"ac"`
-	TestInfo           []string                     `json:"ti"`
-	Commands           []*exec.Cmd                  `json:"c"`
-	ConfigCommands     []*exec.Cmd                  `json:"cc"`
-	ActualValueNodeMap map[string]string            `json:"avmap"`
-	ExpectedResult     string                       `json:"er"`
+	Nodes              []string                     `json:"nodes,omitempty"`
+	Audit              string                       `json:"audit"`
+	AuditConfig        string                       `json:"audit_config"`
+	TestInfo           []string                     `json:"test_info"`
+	Commands           []*exec.Cmd                  `json:"commands"`
+	ConfigCommands     []*exec.Cmd                  `json:"config_commands"`
+	ActualValueNodeMap map[string]string            `json:"actual_value_node_map"`
+	ExpectedResult     string                       `json:"expected_result"`
 }
 
 type GroupWrapper struct {
 	ID            string          `yaml:"id" json:"id"`
-	Text          string          `json:"d"`
-	CheckWrappers []*CheckWrapper `json:"o"`
+	Text          string          `json:"text"`
+	CheckWrappers []*CheckWrapper `json:"checks"`
 }
 
 type SummarizedReport struct {
-	Version       string                `json:"v"`
-	Total         int                   `json:"t"`
-	Fail          int                   `json:"f"`
-	Pass          int                   `json:"p"`
-	Warn          int                   `json:"w"`
-	Skip          int                   `json:"s"`
+	Version       string                `json:"version"`
+	Total         int                   `json:"total"`
+	Fail          int                   `json:"fail"`
+	Pass          int                   `json:"pass"`
+	Warn          int                   `json:"warn"`
+	Skip          int                   `json:"skip"`
 	NotApplicable int                   `json:"na"`
-	Nodes         map[NodeType][]string `json:"n"`
-	GroupWrappers []*GroupWrapper       `json:"o"`
+	Nodes         map[NodeType][]string `json:"nodes"`
+	GroupWrappers []*GroupWrapper       `json:"groups"`
 }
 
 type skipConfig struct {
@@ -257,42 +259,44 @@ func (s *Summarizer) getBenchmarkFor(k8sVersion string) (string, error) {
 	return b, nil
 }
 
-func (s *Summarizer) processOneResultFileForHost(results *kb.Controls, hostname string) {
-	for _, group := range results.Groups {
-		for _, check := range group.Checks {
-			logrus.Infof("host:%s id: %s %v", hostname, check.ID, check.State)
-			printCheck(check)
-			cw := s.checkWrappersMaps[check.ID]
-			if cw == nil {
-				logrus.Errorf("check %s found in results but not in spec", check.ID)
-				continue
-			}
-			if check.Type == CheckTypeSkip {
-				check.State = NA
-			}
-			if msg, ok := s.notApplicable[check.ID]; ok {
-				check.State = NA
-				check.Remediation = msg
-			} else if msg, ok := s.defaultSkip[check.ID]; ok {
-				check.State = SKIP
-				check.Remediation = msg
-			} else if s.userSkip[check.ID] {
-				check.State = SKIP
-			}
-			if cw.Result[check.State] == nil {
-				cw.Result[check.State] = make(map[string]bool)
-			}
-			cw.Result[check.State][hostname] = true
+func (s *Summarizer) processOneResultFileForHost(results *kb.OverallControls, hostname string) {
+	for _, control := range results.Controls {
+		for _, group := range control.Groups {
+			for _, check := range group.Checks {
+				logrus.Infof("host:%s id: %s %v", hostname, check.ID, check.State)
+				printCheck(check)
+				cw := s.checkWrappersMaps[check.ID]
+				if cw == nil {
+					logrus.Errorf("check %s found in results but not in spec", check.ID)
+					continue
+				}
+				if check.Type == CheckTypeSkip {
+					check.State = NA
+				}
+				if msg, ok := s.notApplicable[check.ID]; ok {
+					check.State = NA
+					check.Remediation = msg
+				} else if msg, ok := s.defaultSkip[check.ID]; ok {
+					check.State = SKIP
+					check.Remediation = msg
+				} else if s.userSkip[check.ID] {
+					check.State = SKIP
+				}
+				if cw.Result[check.State] == nil {
+					cw.Result[check.State] = make(map[string]bool)
+				}
+				cw.Result[check.State][hostname] = true
 
-			if cw.ActualValueNodeMap == nil {
-				cw.ActualValueNodeMap = make(map[string]string)
-			}
-			cw.ActualValueNodeMap[hostname] = check.ActualValue
+				if cw.ActualValueNodeMap == nil {
+					cw.ActualValueNodeMap = make(map[string]string)
+				}
+				cw.ActualValueNodeMap[hostname] = check.ActualValue
 
-			resultCheckWrapper := getCheckWrapper(check)
-			resultCheckWrapper.Result = cw.Result
-			resultCheckWrapper.ActualValueNodeMap = cw.ActualValueNodeMap
-			s.checkWrappersMaps[check.ID] = resultCheckWrapper
+				resultCheckWrapper := getCheckWrapper(check)
+				resultCheckWrapper.Result = cw.Result
+				resultCheckWrapper.ActualValueNodeMap = cw.ActualValueNodeMap
+				s.checkWrappersMaps[check.ID] = resultCheckWrapper
+			}
 		}
 	}
 }
@@ -341,7 +345,7 @@ func (s *Summarizer) summarizeForHost(hostname string) error {
 		}
 		logrus.Debugf("results: %+v", results.Controls[0])
 
-		s.processOneResultFileForHost(results.Controls[0], hostname)
+		s.processOneResultFileForHost(results, hostname)
 	}
 	return nil
 }
@@ -426,6 +430,7 @@ func getResultsFileNodeTypeMapping() map[string]NodeType {
 		NodeResultsFilename:         NodeTypeNode,
 		ControlPlaneResultsFilename: NodeTypeNone,
 		PoliciesResultsFilename:     NodeTypeNone,
+		GenericResultsFilename:      NodeTypeNone,
 	}
 }
 
@@ -448,6 +453,10 @@ func (s *Summarizer) getNodeTypeControlsFileMapping() map[string]NodeType {
 			continue
 		} else if FilePathNodeTypeNode == f {
 			FileName := s.getControlsFilePath(NodeControlsFilename)
+			filepaths[FileName] = NodeTypeNode
+			continue
+		} else if strings.HasPrefix(f, FilePathNodeTypeNode) {
+			FileName := s.getControlsFilePath(fmt.Sprintf("%s.yaml", f))
 			filepaths[FileName] = NodeTypeNode
 			continue
 		} else {
@@ -589,11 +598,11 @@ func (s *Summarizer) getMissingNodesMapOfCheckWrapper(check *CheckWrapper, nodes
 }
 
 // Logic:
-// - If a check has a non-PASS state on any host, the check is considered mixed.
-//   Nodes will list the ones where the check has failed.
-// - If a check has all pass, then nodes is empty. All nodes in that host type have passed.
-// - If a check has all fail, then nodes is empty. All nodes in that host type have failed.
-// - If a check is skipped, then nodes is empty.
+//   - If a check has a non-PASS state on any host, the check is considered mixed.
+//     Nodes will list the ones where the check has failed.
+//   - If a check has all pass, then nodes is empty. All nodes in that host type have passed.
+//   - If a check has all fail, then nodes is empty. All nodes in that host type have failed.
+//   - If a check is skipped, then nodes is empty.
 func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 	//copy over the actual result info of the test after running the scan
 	s.copyDataFromResults(cw)
@@ -601,6 +610,7 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 	nodeCount := len(nodesMap)
 	logrus.Debugf("id: %s nodeCount: %d", cw.ID, nodeCount)
 	if len(cw.Result) == 1 {
+		logrus.Debugf("len(cw.Result) == 1")
 		if _, ok := cw.Result[NA]; ok {
 			cw.State = NotApplicable
 			s.fullReport.NotApplicable++
@@ -611,9 +621,15 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 				cw.State = Fail
 				s.fullReport.Fail++
 			} else {
-				cw.State = Mixed
-				s.fullReport.Fail++
-				cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.FAIL])
+				if len(cw.NodeType) == 1 && cw.NodeType[0] != NodeTypeNone {
+					logrus.Debugf("FAIL: setting to Mixed")
+					cw.State = Mixed
+					s.fullReport.Fail++
+					cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.FAIL])
+				} else {
+					cw.State = Fail
+					s.fullReport.Fail++
+				}
 			}
 			return
 		}
@@ -622,9 +638,17 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 				cw.State = Pass
 				s.fullReport.Pass++
 			} else {
-				cw.State = Mixed
-				s.fullReport.Fail++
-				cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.PASS])
+				logrus.Debugf("%+v", cw.NodeType)
+				logrus.Debugf("len=%v", len(cw.NodeType))
+				if len(cw.NodeType) == 1 && cw.NodeType[0] != NodeTypeNone {
+					logrus.Debugf("PASS: setting to Mixed")
+					cw.State = Mixed
+					s.fullReport.Fail++
+					cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.PASS])
+				} else {
+					cw.State = Pass
+					s.fullReport.Pass++
+				}
 			}
 			return
 		}
@@ -633,9 +657,15 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 				cw.State = Skip
 				s.fullReport.Skip++
 			} else {
-				cw.State = Mixed
-				s.fullReport.Fail++
-				cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[SKIP])
+				if len(cw.NodeType) == 1 && cw.NodeType[0] != NodeTypeNone {
+					logrus.Debugf("SKIP: setting to Mixed")
+					cw.State = Mixed
+					s.fullReport.Fail++
+					cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[SKIP])
+				} else {
+					cw.State = Skip
+					s.fullReport.Skip++
+				}
 			}
 			return
 		}
@@ -644,9 +674,15 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 				cw.State = Warn
 				s.fullReport.Warn++
 			} else {
-				cw.State = Mixed
-				s.fullReport.Warn++
-				cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.WARN])
+				if len(cw.NodeType) == 1 && cw.NodeType[0] != NodeTypeNone {
+					logrus.Debugf("WARN: setting to Mixed")
+					cw.State = Mixed
+					s.fullReport.Warn++
+					cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[kb.WARN])
+				} else {
+					cw.State = Warn
+					s.fullReport.Warn++
+				}
 			}
 			return
 		}
@@ -656,6 +692,7 @@ func (s *Summarizer) runFinalPassOnCheckWrapper(cw *CheckWrapper) {
 				s.fullReport.Fail++
 				cw.Result[k] = nil
 			} else {
+				logrus.Debugf("default: setting to Mixed")
 				cw.State = Mixed
 				s.fullReport.Fail++
 				cw.Nodes = s.getMissingNodesMapOfCheckWrapper(cw, cw.Result[k])
