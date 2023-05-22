@@ -110,6 +110,10 @@ type CheckWrapper struct {
 type GroupWrapper struct {
 	ID            string          `yaml:"id" json:"id"`
 	Text          string          `json:"text"`
+	Pass          int             `json:"pass"`
+	Fail          int             `json:"fail"`
+	Warn          int             `json:"warn"`
+	Info          int             `json:"info"`
 	CheckWrappers []*CheckWrapper `json:"checks"`
 }
 
@@ -736,6 +740,14 @@ func (s *Summarizer) runFinalPass() error {
 			s.runFinalPassOnCheckWrapper(cw)
 			logrus.Debugf("after final pass on check")
 			printCheckWrapper(cw)
+			switch cw.State {
+			case Pass:
+				group.Pass++
+			case Fail:
+				group.Fail++
+			case Warn:
+				group.Warn++
+			}
 		}
 	}
 
