@@ -275,7 +275,7 @@ func (s *Summarizer) processOneResultFileForHost(results *kb.OverallControls, ho
 					continue
 				}
 				if check.Type == CheckTypeSkip {
-					check.State = NA
+					check.State = SKIP
 				}
 				if msg, ok := s.notApplicable[check.ID]; ok {
 					check.State = NA
