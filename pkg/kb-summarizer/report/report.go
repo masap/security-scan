@@ -45,6 +45,7 @@ type Check struct {
 	ExpectedResult     string            `json:"expected_result"`
 	TestType           string            `json:"test_type"`
 	Scored             bool              `json:"scored"`
+	Kind               string            `json:"kind"`
 }
 
 type Group struct {
@@ -120,6 +121,7 @@ func mapCheck(intCheck *summarizer.CheckWrapper) *Check {
 		ExpectedResult:     intCheck.ExpectedResult,
 		TestType:           intCheck.Type,
 		Scored:             intCheck.Scored,
+		Kind:               intCheck.Kind,
 	}
 }
 

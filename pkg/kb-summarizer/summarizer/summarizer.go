@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	kb "github.com/aquasecurity/kube-bench/check"
+	kb "github.com/masap/kube-bench/check"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
@@ -94,6 +94,7 @@ type CheckWrapper struct {
 	Remediation        string                       `json:"remediation"`
 	State              State                        `json:"state"`
 	Scored             bool                         `json:"scored"`
+	Kind               string                       `json:"kind"`
 	Result             map[kb.State]map[string]bool `json:"-"`
 	NodeType           []NodeType                   `json:"node_type"`
 	NodesMap           map[string]bool              `json:"-"`
@@ -557,6 +558,7 @@ func getCheckWrapper(check *kb.Check) *CheckWrapper {
 		Type:        check.Type,
 		Remediation: check.Remediation,
 		Scored:      check.Scored,
+		Kind:        check.Kind,
 		Result:      map[kb.State]map[string]bool{},
 		Audit:       check.Audit,
 		AuditConfig: check.AuditConfig,
